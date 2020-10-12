@@ -134,7 +134,7 @@ uint32_t defcon_colors[] = {
 
 // General stuff
 unsigned long countdownToClock = 0;
-
+byte lastSeconds = 0;
 
 // Setup 3 AlphaNumeric displays (4 digits per display)
 Adafruit_AlphaNum4 matrix[3] = { Adafruit_AlphaNum4(), Adafruit_AlphaNum4(), Adafruit_AlphaNum4() };
@@ -591,7 +591,7 @@ void DisplayTime()
       curDisplay++;
     }
   }
-
+  RGB_SetSeconds(timeinfo.tm_sec);
   // Show whatever is in the display buffer on the display
   Display();
 }
@@ -810,6 +810,33 @@ void Display()
 {
   for ( int i = 0; i < 3; i++ )
     matrix[i].writeDisplay();
+}
+
+void RGB_SetSeconds( byte secs )
+{
+  // Only update the defcon display if the value has changed
+  // to prevent flickering
+  if ( secs == lastSeconds ) return;
+  lastSeconds = secs;
+  RGB_Clear();
+  // Zero buffer
+  for (int i = 0; i < 5; i++)
+    leds[i] = 0;
+    
+  // 10's (0-5)
+  if ( (secs / 10) > 0 ) {
+    int i = (secs / 10) - 1;
+    leds[i] = defcon_colors[i];
+  }
+  if ( (secs % 10) > 0) {
+    // Convert ones place seconds to binary and OR with tens decimal
+    int ones = secs % 10;
+    for (int i=0; i <= 4; i++) {
+      if ( (ones >> i) & 1 )
+        leds[i] ^= defcon_colors[4 - i];
+    }
+  }
+  RGB_FillBuffer();
 }
 
 void RGB_SetDefcon( byte level, bool force )
