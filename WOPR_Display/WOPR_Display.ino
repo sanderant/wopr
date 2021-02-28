@@ -30,6 +30,14 @@
 #include "secret.h"
 #include "rmt.h"
 
+#include <PubSubClient.h>
+#include <TinyPICO.h>
+TinyPICO tp = TinyPICO();
+
+WiFiClient espClient; 
+PubSubClient client(espClient);
+
+
 // Defines
 #ifndef _BV
 #define _BV(bit) (1<<(bit))
@@ -159,6 +167,10 @@ OneButton Button3(BUT3, false);
 OneButton Button4(BUT4, false);
 #endif
 
+
+
+
+
 void setup()
 {
   Serial.begin(115200);
@@ -214,20 +226,53 @@ void setup()
      Make sure you have set your SSID and Password in secret.h
   */
 
-  StartWifi();
+
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+  tp.DotStar_SetPower( false );
+  
+ 
+
 
   // User settable countdown from main menu to go into clock if no user interaction
   // Has happened. settings_clockCountdownTime is in seconds and we want milliseconds
 
   countdownToClock = millis() + settings_clockCountdownTime * 1000;
 
+
   // Display MENU
   DisplayText( "MENU" );
+
+
+  delay(500);
+  Serial.println("Leaving Setup");
 }
 
+
+void setup_wifi() {
+  delay(10);
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+
+/*
 void StartWifi()
 {
-
   if ( ssid == "PUT SSID HERE" )
   {
     DisplayText( "SSID NOT SET" );
@@ -248,9 +293,11 @@ void StartWifi()
 
     //connect to WiFi
     int wifi_counter = 100;
+    
+ 
     Serial.printf("Connecting to %s ", ssid);
     WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED && wifi_counter > 0)
+    while (WiFi.status() != WL_CONNECTED)
     {
       delay(100);
       RGB_Rainbow(0);
@@ -258,7 +305,7 @@ void StartWifi()
       Serial.print(".");
     }
 
-    if (WiFi.status() != WL_CONNECTED && wifi_counter == 0)
+    if (WiFi.status() != WL_CONNECTED )
     {
       DisplayText( "WiFi FAILED" );
       RGB_SetColor_ALL( Color(255, 0, 0) );
@@ -271,12 +318,25 @@ void StartWifi()
       Serial.println(" CONNECTED");
       DisplayText( "WiFi GOOD" );
       RGB_SetColor_ALL( Color(0, 255, 0) );
+      
+      // Serial.println("IP address: ");
+      // Serial.println(WiFi.localIP());
+
+  */
 
       hasWiFi = true;
 
       delay(500);
 
       //init and get the time
+    ntptime();
+
+      delay(1000);
+
+}
+
+void ntptime() {
+        //init and get the time
 
       configTime(settings_GMT * 3600, settings_DST ? daylightOffset_sec : 0, ntpServer);
 
@@ -288,20 +348,102 @@ void StartWifi()
       }
       else
       {
+        Serial.println("Got Time ");
         Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 
         //disconnect WiFi as it's no longer needed
-        WiFi.disconnect(true);
-        WiFi.mode(WIFI_OFF);
+       // WiFi.disconnect(true);
+       // WiFi.mode(WIFI_OFF);
 
         DisplayText( "Time Set OK" );
         RGB_SetColor_ALL( Color(0, 0, 255) );
       }
 
       delay(1000);
+}
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (client.connect(mqttclientID,mqttUser,mqttPassword)) {
+      Serial.println("connected");
+      // Subscribe
+      client.subscribe("esp32/output");
+      client.subscribe("wopr/missile");
+          client.publish("wopr/status", "connected");
+
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+     // Wait 5 seconds before retrying
+      delay(5000);
     }
   }
 }
+
+void callback(char* topic, byte* message, unsigned int length) {
+  Serial.print("Message arrived on topic: ");
+  Serial.print(topic);
+  Serial.println(". Message: ");
+  String messageTemp;
+  
+  for (int i = 0; i < length; i++) {
+    // Serial.println((char)message[i]);
+    messageTemp += (char)message[i];
+  }
+  Serial.println(messageTemp);
+
+
+  if (String(topic) == "wopr/missile") {
+    Serial.print("wopr/missile");
+    
+    if(messageTemp == "launch")
+    { 
+      Serial.println("launch");
+      Serial.println("currentMode = MOVIE;");
+      currentMode = MOVIE;
+      ResetCode();
+      Clear();
+    }
+    else if(messageTemp == "clock"){
+      Serial.println("clock");
+      currentMode = CLOCK;
+      ResetCode();
+      Clear();
+      }
+     else if(messageTemp == "message"){
+      Serial.println("message");
+      currentMode = MESSAGE;
+      ResetCode();
+      Clear();
+      }
+    else if(messageTemp == "ntp"){
+      Serial.println("ntp");
+      ntptime();
+      currentMode = CLOCK;
+      ResetCode();
+      Clear();
+      }
+  }
+  
+    if (String(topic) == "esp32/output") {
+    Serial.print("Changing output to ");
+    if(messageTemp == "on"){
+      Serial.println("on");
+      tp.DotStar_CycleColor(25);
+
+    }
+    else if(messageTemp == "off"){
+      Serial.println("off");
+      tp.DotStar_Clear();
+    }
+  }
+}
+
+
 
 // Button press code her
 long nextButtonPress = 0;
@@ -675,6 +817,7 @@ void RandomiseSolveOrder()
 // Reset the code being solved back to it's starting state
 void ResetCode()
 {
+  Serial.print("in ResetCode function");
   if ( currentMode == MOVIE )
   {
     solveStepMulti = 1;
@@ -868,8 +1011,22 @@ void RGB_SetColor_ALL(uint32_t col)
   RGB_FillBuffer();
 }
 
+
+
+
+
+
+
 void loop()
 {
+  if (!client.connected()) {
+      Serial.println("going to MQTT StartWifi loop ");
+    reconnect();
+  }
+    
+    client.loop(); // MQTT Library loop. Calls CallBack if mqtt msgs arrive.
+
+  
   // Used by OneButton to poll for button inputs
   Button1.tick();
   Button2.tick();
@@ -1010,7 +1167,7 @@ void loadSettings()
   settings_GMT = set_GMT.get();
 
   ESPFlash<int> set_DST("/set_DST");
-  settings_DST = set_DST.get() == 1;
+  settings_DST = set_DST.get() == 1; // dargs - make 'settings_DST' = TRUE if set_DST is = 1.. (eg false if its 0) 
 
   ESPFlash<uint8_t> set_Brightness("/set_Brightness");
   settings_displayBrightness = set_Brightness.get();
@@ -1022,7 +1179,7 @@ void saveSettings()
   set_GMT.set(settings_GMT);
 
   ESPFlash<int> set_DST("/set_DST");
-  set_DST.set(settings_DST ? 1 : 0);
+  set_DST.set(settings_DST ? 1 : 0); // dargs - set-DST to 1 if true, 0 if false. 
 
   ESPFlash<uint8_t> set_ClockCountdown("/set_ClockCountdown");
   set_ClockCountdown.set(settings_clockCountdownTime);
