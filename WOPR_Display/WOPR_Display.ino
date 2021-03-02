@@ -67,7 +67,14 @@ bool settings_DST = false;
 // User settable display brightness
 uint8_t settings_displayBrightness = 15;
 // User settable clock separator
-uint8_t settings_separator = 0; // 0 is " ", 1 is "-", 2 is "_"
+int settings_separator = 0; // 0 is " ", 1 is "-", 2 is "_"
+          // extra separators by Kean
+          // 3 is "." (uses no extra digits) and includes day of month
+          // 4 is "/" date in DD/MM or MM/DD format (uses . separator)
+// User settable leading zero
+bool settings_lzero = false;
+// User settable date format DD/MM or MM/DD or DDMmm
+int settings_datefmt = 0;
 
 
 // NTP Wifi Time
@@ -77,31 +84,34 @@ bool didChangeClockSettings = false;
 bool hasWiFi = false;
 
 //// Program & Menu state
-String clockSeparators [] = {" ", "-", "_"};
+char clockSeparators[] = {' ', '-', '_', '.', '/'};
 String stateStrings[] = {"MENU", "RUNNING", "SETTINGS"};
 String menuStrings[] = {"MODE MOVIE", "MODE RANDOM", "MODE MESSAGE", "MODE CLOCK", "SETTINGS"};
-String settingsStrings[] = {"GMT ", "DST ", "BRIGHT ", "CLK CNT ", "CLK SEP "};
+String settingsStrings[] = {"GMT ", "DST ", "BRIGHT ", "CLK CNT ", "CLK SEP ", "LD ZERO ", "DATE "};
+String dateFormatStrings[] = {"DD/MM", "MM/DD", "DDMon"};
 
 enum states {
   MENU = 0,
-  RUNNING = 1,
-  SET = 2,
+  RUNNING,
+  SET,
 } currentState;
 
 enum modes {
   MOVIE = 0,
-  RANDOM = 1,
-  MESSAGE = 2,
-  CLOCK = 3,
-  SETTINGS = 4,
+  RANDOM,
+  MESSAGE,
+  CLOCK,
+  SETTINGS,
 } currentMode;
 
 enum settings {
   SET_GMT = 0,
-  SET_DST = 1,
-  SET_BRIGHT = 2,
-  SET_CLOCK = 3,
-  SET_SEP = 4,
+  SET_DST,
+  SET_BRIGHT,
+  SET_CLOCK,
+  SET_SEP,
+  SET_LZERO,
+  SET_DATEFMT
 } currentSetting;
 
 
@@ -647,10 +657,22 @@ void UpdateSetting( int dir )
   else if ( currentSetting == SET_SEP )
   {
     settings_separator += dir;
-    if ( settings_separator == 3)
+    if ( settings_separator == ELEMENTS(clockSeparators) )
       settings_separator = 0;
     else if ( settings_separator < 0 )
-      settings_separator = 2;
+      settings_separator = ELEMENTS(clockSeparators) - 1;
+  }
+  else if ( currentSetting == SET_LZERO )
+  {
+    settings_lzero = !settings_lzero;
+  }
+  else if ( currentSetting == SET_DATEFMT )
+  {
+    settings_datefmt += dir;
+    if ( settings_datefmt == ELEMENTS(dateFormatStrings) )
+      settings_datefmt = 0;
+    else if ( settings_datefmt < 0 )
+      settings_datefmt = ELEMENTS(dateFormatStrings) - 1;
   }
 
   // Update the display showing whatever the new current setting is
@@ -679,11 +701,19 @@ void ShowSettings()
   }
   else if ( currentSetting == SET_SEP)
   {
-    if ( settings_separator == 0 )
+    if ( clockSeparators[settings_separator] == ' ' )
       val = "SPC";
+    else if ( clockSeparators[settings_separator] == '.' )
+      val = "Dot";
+    else if ( clockSeparators[settings_separator] == '/' )
+      val = "Date";
     else
-      val = clockSeparators[settings_separator];
+      val = String(clockSeparators[settings_separator]);
   }
+  else if ( currentSetting == SET_LZERO )
+    val = settings_lzero ? "ON" : "OFF";
+  else if ( currentSetting == SET_DATEFMT )
+    val = dateFormatStrings[settings_datefmt];
 
   DisplayText( settingsStrings[(int)currentSetting] + val);
 }
@@ -712,20 +742,60 @@ void DisplayTime()
     return;
   }
   // Formt the contents of the time struct into a string for display
-  char DateAndTimeString[12];
-  String sep = clockSeparators[settings_separator];
-  if ( timeinfo.tm_hour < 10 )
-    sprintf(DateAndTimeString, "   %d%s%02d%s%02d", timeinfo.tm_hour, sep, timeinfo.tm_min, sep, timeinfo.tm_sec);
+  char buf[20];
+  char sep = clockSeparators[settings_separator];
+  if (sep=='.') {
+    String stndrdth;
+    switch (timeinfo.tm_mday) {
+      case 1: case 21: case 31: stndrdth = "st"; break;
+      case 2: case 22: stndrdth = "nd"; break;
+      case 3: case 23:  stndrdth = "rd"; break;
+      default: stndrdth = "th"; break;
+    }
+    sprintf(buf, "%2d%s  ", timeinfo.tm_mday, stndrdth);
+  }
+  else if (sep=='/') {
+    if (settings_datefmt==0) {  // DD/MM
+      if (settings_lzero)
+        sprintf(buf, "%02d/%02d ", timeinfo.tm_mday, timeinfo.tm_mon+1);
+      else if (timeinfo.tm_mon+1<10)
+        sprintf(buf, "%2d/%d  ", timeinfo.tm_mday, timeinfo.tm_mon+1);
+      else
+        sprintf(buf, "%2d/%2d ", timeinfo.tm_mday, timeinfo.tm_mon+1);
+    }
+    else if (settings_datefmt==1) {  // MM/DD
+      if (settings_lzero)
+        sprintf(buf, "%02d/%02d ", timeinfo.tm_mon+1, timeinfo.tm_mday);
+      else if (timeinfo.tm_mday<10)
+        sprintf(buf, "%2d/%d  ", timeinfo.tm_mon+1, timeinfo.tm_mday);
   else
-    sprintf(DateAndTimeString, "  %d%s%02d%s%02d", timeinfo.tm_hour, sep, timeinfo.tm_min, sep, timeinfo.tm_sec);
+        sprintf(buf, "%2d/%2d ", timeinfo.tm_mon+1, timeinfo.tm_mday);
+    }
+    else { // DDMmm (or D Mmm)
+      sprintf(buf, "%d", timeinfo.tm_mday);
+      if (timeinfo.tm_mday<10) strcat(buf, " ");
+      strftime(buf+strlen(buf), sizeof(buf)-strlen(buf), "%b ", &timeinfo);
+    }
+    sep = '.';
+  }
+  else
+    sprintf(buf, "  ");
+  
+  if ( timeinfo.tm_hour < 10 && !settings_lzero )
+    sprintf(buf+strlen(buf), " %d%c%02d%c%02d", timeinfo.tm_hour, sep, timeinfo.tm_min, sep, timeinfo.tm_sec);
+  else
+    sprintf(buf+strlen(buf), "%02d%c%02d%c%02d", timeinfo.tm_hour, sep, timeinfo.tm_min, sep, timeinfo.tm_sec);
 
   // Iterate through each digit on the display and populate the time, or clear the digit
   uint8_t curDisplay = 0;
   uint8_t curDigit = 0;
 
-  for ( uint8_t i = 0; i < 10; i++ )
+  for ( uint8_t i = 0; i < strlen(buf); i++ )
   {
-    matrix[curDisplay].writeDigitAscii( curDigit, DateAndTimeString[i]);
+    if (buf[i+1]=='.')
+      matrix[curDisplay].writeDigitAscii(curDigit, buf[i++], true);
+    else
+      matrix[curDisplay].writeDigitAscii(curDigit, buf[i]);
     curDigit++;
     if ( curDigit == 4 )
     {
@@ -749,6 +819,9 @@ void DisplayText(String txt)
   // Iterate through each digit and push the character rom the txt string into that position
   for ( uint8_t i = 0; i < txt.length(); i++ )
   {
+    if (i<txt.length()-1 && txt.charAt(i+1)=='.')
+      matrix[curDisplay].writeDigitAscii( curDigit, txt.charAt(i), true);
+    else
     matrix[curDisplay].writeDigitAscii( curDigit, txt.charAt(i));
     curDigit++;
     if ( curDigit == 4 )
@@ -1003,7 +1076,7 @@ void RGB_SetDefcon( byte level, bool force )
 
 void RGB_Rainbow(int wait)
 {
-  if ( nextRGB < millis() )
+  if ((long)(millis() - nextRGB)>=0)
   {
     nextRGB = millis() + wait;
     nextPixelHue += 256;
@@ -1070,9 +1143,10 @@ void loop()
 
     // Timer to go into clock if no user interaction for XX seconds
     // If settings_clockCountdownTime is 0, this feature is off
-    if ( hasWiFi && settings_clockCountdownTime > 0 && countdownToClock < millis()  )
+    if ( hasWiFi && settings_clockCountdownTime > 0 && ((long)(millis() - countdownToClock)>=0))
     {
       Clear();
+      RGB_Clear(true);
       currentMode = CLOCK;
       currentState = RUNNING;
     }
@@ -1087,10 +1161,10 @@ void loop()
   {
     if ( currentMode == 3 )
     {
-      if ( nextBeep < millis() )
+      if ((long)(millis() - nextBeep)>=0)
       {
         DisplayTime();
-        nextBeep = millis() + 1000;
+        nextBeep = millis() + 100; // 1000;
       }
     }
     else
@@ -1098,7 +1172,7 @@ void loop()
       // We have solved the code
       if ( solveCount == solveCountFinished )
       {
-        if ( nextBeep < millis() )
+        if ((long)(millis() - nextBeep)>=0)
         {
           beeping = !beeping;
           nextBeep = millis() + 500;
@@ -1131,7 +1205,7 @@ void loop()
       }
 
       // Only update the displays every "tickStep"
-      if ( nextTick < millis() )
+      if ((long)(millis() - nextTick)>=0)
       {
         nextTick = millis() + tickStep;
 
@@ -1145,7 +1219,7 @@ void loop()
 
       // This is where we solve each code digit
       // The next solve step is a random length to make it take a different time every run
-      if ( nextSolve < millis() )
+      if ((long)(millis() - nextSolve)>=0)
       {
         nextSolve = millis() + solveStep;
         // Set the solve time step to a random length
@@ -1157,7 +1231,7 @@ void loop()
       // Zturn off any beeping if it's trying to beep
       if ( beeping )
       {
-        if ( nextBeep < millis() )
+        if ((long)(millis() - nextBeep)>=0)
         {
           ledcWriteTone(channel, 0);
           beeping = false;
@@ -1198,6 +1272,12 @@ void loadSettings()
 
   ESPFlash<uint8_t> set_Brightness("/set_Brightness");
   settings_displayBrightness = set_Brightness.get();
+
+  ESPFlash<int> set_lzero("/set_LeadingZero");
+  settings_lzero = set_lzero.get() == 1;
+
+  ESPFlash<int> set_datefmt("/set_DateFormat");
+  settings_datefmt = constrain(set_datefmt.get(), 0, ELEMENTS(dateFormatStrings) - 1);
 }
 
 void saveSettings()
@@ -1216,4 +1296,10 @@ void saveSettings()
 
   ESPFlash<uint8_t> set_Brightness("/set_Brightness");
   set_Brightness.set(settings_displayBrightness);
+
+  ESPFlash<int> set_lzero("/set_LeadingZero");
+  set_lzero.set(settings_lzero ? 1 : 0);
+
+  ESPFlash<int> set_datefmt("/set_DateFormat");
+  set_datefmt.set(settings_datefmt);
 }
