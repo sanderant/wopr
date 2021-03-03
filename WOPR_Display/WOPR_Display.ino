@@ -19,7 +19,7 @@
  ****************************************************/
 
 // Un-comment this line if using the new HAXORZ PCB revision
-#define HAXORZ_EDITION 1
+//#define HAXORZ_EDITION 1
 
 #include <Adafruit_GFX.h> // From Library Manager
 #include "Adafruit_LEDBackpack.h" // From Library Manager
